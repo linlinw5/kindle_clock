@@ -1,132 +1,52 @@
-var apiProtocol = window.location.protocol === "file:" ? "https:" : window.location.protocol;
-DT_Times = 0;
-requestStartTime = 0;
-requestEndTime = 0;
+var DT_Times = 0;
 
-var jsonp = (function () {
-  return {
-    request: function (src, callback, id) {
-      try {
-        var self = this,
-          script = null;
-        self.done = false;
-        if (typeof id === "undefined") {
-          id = "jsonp";
-        }
-        if (document.getElementById(id) !== null) {
-          script = document.getElementById(id);
-          document.body.removeChild(script);
-        }
-        script = document.createElement("script");
-        script.type = "application/javascript";
-        script.id = id;
-        script.src = src;
-        script.onload = function () {
-          console.log("onload");
-          if (typeof callback !== "undefined") {
-            callback(self.responseObject);
-          }
-          script.onload = null;
-          document.body.removeChild(script);
-          script = null;
-        };
-        document.body.appendChild(script);
-      } catch (exception) {
-        console.log(exception);
-      }
-    },
-
-    response: function (response) {
-      try {
-        this.responseObject = response;
-      } catch (exception) {
-        console.log(exception);
-      }
-    },
-  };
-})();
-
-function refreshActualWeather() {
-  jsonp.request(
-    apiProtocol +
-      "//api.openweathermap.org/data/2.5/weather?" +
-      _apiParams +
-      "&callback=jsonp.response" +
-      "&_timestamp=" +
-      new Date().getTime(),
-    function (data) {
-      processActualWeather(data);
-    },
-    "actual"
-  );
-}
-
-function refreshForecastWeather() {
-  jsonp.request(
-    apiProtocol +
-      "//api.openweathermap.org/data/2.5/forecast?" +
-      _apiParams +
-      "&callback=jsonp.response" +
-      "&_timestamp=" +
-      new Date().getTime(),
-    function (data) {
-      processForecastWeather(data);
-    },
-    "forecast"
-  );
-}
-
-function getNISTTimestamp() {
-  const xhr = new XMLHttpRequest();
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState === 4) {
-      requestEndTime = new Date().getTime();
-      if (xhr.status === 200) {
-        const responseText = xhr.responseText;
-        const timeMatch = responseText.match(/time="(\d+)"/);
-        if (timeMatch && timeMatch[1]) {
-          serverTimestamp = parseInt(Number(timeMatch[1]) / 1000);
-          net_DelyTime = requestEndTime - requestStartTime;
-          net_OneWTime = parseInt(net_DelyTime / 2);
-          net_ServerArrivalTime = requestStartTime + net_OneWTime;
-          DT_Times = serverTimestamp - net_ServerArrivalTime;
-          // console.log("请求时间:", requestStartTime);
-          // console.log("响应时间:", requestEndTime);
-          // console.log("服务器时间戳:", serverTimestamp);
-          // console.log("时间误差:", DT_Times);
-        } else {
-          console.error("无法从响应中提取时间戳");
-        }
-      } else {
-        console.error("请求失败。状态码:", xhr.status);
-      }
-    }
-  };
-
-  requestStartTime = new Date().getTime();
-  xhr.open("GET", "https://time.gov/widget/dhtml/at_nist_use_only.cgi?disablecache=" + new Date().getTime(), true);
-
-  try {
-    xhr.send();
-  } catch (error) {
-    console.error("发送请求时出错:", error);
+function validateWeatherItem(data) {
+  if (!data || !data.main || typeof data.main.temp !== "number" ||
+      typeof data.main.feels_like !== "number" || !data.weather || !data.weather[0] ||
+      typeof data.weather[0].icon !== "string" || typeof data.weather[0].description !== "string" ||
+      typeof data.weather[0].id !== "number" || typeof data.dt !== "number") {
+    throw new Error("Invalid weather item");
   }
 }
 
+function refreshActualWeather() {
+  clockNetwork.weather("weather", _apiParams, refreshTime, function (data) {
+    validateWeatherItem(data);
+    if (!data.sys || typeof data.sys.sunrise !== "number" || typeof data.sys.sunset !== "number" ||
+        !data.coord || typeof data.coord.lat !== "number" || typeof data.name !== "string") {
+      throw new Error("Invalid current weather");
+    }
+  }, processActualWeather);
+}
+
+function refreshForecastWeather() {
+  clockNetwork.weather("forecast", _apiParams, refreshTime, function (data) {
+    if (!data || !data.city || !data.city.coord || typeof data.city.coord.lat !== "number" ||
+        !data.list || data.list.length < forecastCount) throw new Error("Invalid forecast");
+    for (var i = 0; i < forecastCount; i++) validateWeatherItem(data.list[i]);
+  }, processForecastWeather);
+}
+
 function refresTT() {
-  tt = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("HH:mm");
-  lastUpdate = document.getElementById("lastUpdate");
-  lastUpdate.innerHTML = tt;
-  console.log("refresTT:", tt);
-  window.setTimeout("refresTT()", 15 * 1000);
+  var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
+  document.getElementById("lastUpdate").innerHTML = now.format("HH:mm");
+  document.getElementById("date").innerHTML = now.format("YY-MM-DD");
+  updateCalendar();
+  setNightMode();
+  window.setTimeout(refresTT, 15 * 1000);
 }
 
 function refreshData() {
-  getNISTTimestamp();
-  setNightMode();
+  clockNetwork.syncTime();
   refreshActualWeather();
   refreshForecastWeather();
-  window.setTimeout("refreshData()", refreshTime);
+  window.setTimeout(refreshData, 60 * 1000);
+}
+
+var sunTimesHtml = "";
+function updateCalendar() {
+  var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
+  if (sun) sun.innerHTML = now.format("第WW周") + "&nbsp;&nbsp;" + sunTimesHtml + now.format("dddd");
 }
 
 function processForecastWeather(data) {
@@ -254,15 +174,9 @@ function processActualWeather(data) {
 
   lastUpdate = document.getElementById("lastUpdate");
   lastUpdate.innerHTML = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format(timeFormat);
-  sun.innerHTML =
-    momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("第WW周") +
-    "&nbsp;&nbsp;" +
-    sunrise.format(timeFormat) +
-    "<i class='wi wi-sunrise'></i>&nbsp;&nbsp;&nbsp;" +
-    sunset.format(timeFormat) +
-    "<i class='wi wi-sunset'></i> " +
-    "&nbsp;&nbsp;" +
-    momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("dddd");
+  sunTimesHtml = sunrise.format(timeFormat) + "<i class='wi wi-sunrise'></i>&nbsp;&nbsp;&nbsp;" +
+    sunset.format(timeFormat) + "<i class='wi wi-sunset'></i>&nbsp;&nbsp;";
+  updateCalendar();
   setNightMode();
   setMoonIconsRotation(data.coord.lat);
 }
@@ -415,6 +329,7 @@ window.addEventListener("load", function () {
   _apiParams = getApiParams();
   if (_apiParams === null) {
     window.location = "config.html";
+    return;
   }
 
   moment.locale(momentLocale());
@@ -425,7 +340,7 @@ window.addEventListener("load", function () {
   city = document.getElementById("city");
   city.addEventListener("click", function (event) {
     event.preventDefault();
-    window.location.href = "config.html";
+    window.location.href = "config.html" + window.location.search;
     return false;
   });
   temp.addEventListener("click", function (event) {
@@ -447,8 +362,9 @@ window.addEventListener("load", function () {
     });
   }
 
-  refreshData();
+  city.textContent = "设置城市";
   refresTT();
+  refreshData();
 
   rotate();
   setRem("load");
