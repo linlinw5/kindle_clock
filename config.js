@@ -18,10 +18,10 @@ var refreshTime = 30 * 60 * 1000;
 // "on" - night mode all the day :)
 var night_mode = "off";
 
-// Timezone offset - kindle doesnt report correct local time to the kindle (always it is GMT),
-// You can set custom GMT offset, in format "+08:00".
-// You may need to set it again after winter/summer time change.
-// Null is default
+// null: follow the city timezone returned by weather (UTC+8 until available).
+// "local": use the device timezone, which may be incorrect on Kindle.
+// A fixed offset such as "+08:00" overrides the city timezone.
+// Fixed overrides need manual adjustment for daylight saving time.
 var utcOffset = null;
 
 var cityNameDB = {
@@ -92,4 +92,29 @@ var cityNameDB = {
   HongKong: "香港",
   Macau: "澳门",
   Taipei: "台北",
+
+  // 加拿大常用城市（含部分带重音符号的名称别名）
+  Ottawa: "渥太华",
+  Toronto: "多伦多",
+  Vancouver: "温哥华",
+  Montreal: "蒙特利尔",
+  "Montréal": "蒙特利尔",
+  Quebec: "魁北克市",
+  "Québec": "魁北克市",
+  "Quebec City": "魁北克市",
+  Calgary: "卡尔加里",
+  Edmonton: "埃德蒙顿",
+  Winnipeg: "温尼伯",
+  Victoria: "维多利亚",
+  Halifax: "哈利法克斯",
+  Charlottetown: "夏洛特敦",
+  Fredericton: "弗雷德里克顿",
+  "St. John's": "圣约翰斯",
+  Regina: "里贾纳",
+  Saskatoon: "萨斯卡通",
+  Mississauga: "密西沙加",
+  Brampton: "布兰普顿",
+  Hamilton: "汉密尔顿",
+  Waterloo: "滑铁卢",
+  London: "伦敦",
 };

@@ -267,7 +267,7 @@ var timeFormat = "HH:mm";
 var api_params, api_appId, api_lang, api_units, api_locParams, rotation, night_mode, refreshTime, utcOffset, tempType, cityNameDB;
 utcOffset = getUrlParameter("utcOffset") ? getUrlParameter("utcOffset") : utcOffset;
 tempType = getUrlParameter("tempType") ? getUrlParameter("tempType") : tempType;
-var dataTimeZone = 0;
+var dataTimeZone = null;
 var _sunsetHour = 18;
 var _sunriseHour = 6;
 var _apiParams = null;
@@ -465,7 +465,10 @@ function clearScreen(times) {
 
 function momentWithCorrectUtcOffset(dateTime) {
   if (typeof utcOffset === "undefined" || utcOffset === null || utcOffset === "") {
-    return moment(dateTime).utcOffset("+08:00");
+    // OpenWeather returns seconds east of UTC; Moment accepts minutes.
+    // Keep the original UTC+8 fallback until weather (or its cache) is available.
+    var offsetMinutes = typeof dataTimeZone === "number" && isFinite(dataTimeZone) ? dataTimeZone / 60 : 480;
+    return moment(dateTime).utcOffset(offsetMinutes);
   } else if (utcOffset === "local") {
     return moment(dateTime);
   } else {

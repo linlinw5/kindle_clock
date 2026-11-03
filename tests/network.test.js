@@ -137,3 +137,25 @@ test('clock and calendar cross midnight even with no weather response', () => {
   assert.equal(b.elements.date.innerHTML, '26-11-04');
   assert.equal(b.elements.lastUpdate.innerHTML, '00:00');
 });
+
+test('automatic timezone follows city offset in seconds, including UTC and fractional hours', () => {
+  const b = browser();
+  vm.runInContext(fs.readFileSync('vendor/moment/moment-with-locales.js', 'utf8'), b.context);
+  vm.runInContext(fs.readFileSync('script.js', 'utf8'), b.context);
+  const instant = new Date('2026-11-03T02:00:00Z');
+  function displayed() { return b.context.momentWithCorrectUtcOffset(instant).format('YYYY-MM-DD HH:mm'); }
+  assert.equal(displayed(), '2026-11-03 10:00');
+  b.context.dataTimeZone = -18000;
+  assert.equal(displayed(), '2026-11-02 21:00');
+  b.context.dataTimeZone = 0;
+  assert.equal(displayed(), '2026-11-03 02:00');
+  b.context.dataTimeZone = 19800;
+  assert.equal(displayed(), '2026-11-03 07:30');
+  b.context.utcOffset = '+09:00';
+  assert.equal(displayed(), '2026-11-03 11:00');
+  b.context.utcOffset = 'local';
+  assert.equal(displayed(), b.context.moment(instant).format('YYYY-MM-DD HH:mm'));
+  b.context.utcOffset = null;
+  b.context.dataTimeZone = NaN;
+  assert.equal(displayed(), '2026-11-03 10:00');
+});
