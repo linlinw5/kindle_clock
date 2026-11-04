@@ -1,4 +1,19 @@
 var DT_Times = 0;
+var clockTimer = null;
+var dataTimer = null;
+
+// Diagnostics must never interrupt the task they are reporting on.
+function runRefreshStep(name, action) {
+  try {
+    action();
+  } catch (error) {
+    try {
+      var element = document.getElementById("runtimeStatus");
+      if (element) element.textContent = "Error [" + name + "]: " +
+        String(error && error.message ? error.message : error).slice(0, 180);
+    } catch (ignored) {}
+  }
+}
 
 function validateWeatherItem(data) {
   if (!data || !data.main || typeof data.main.temp !== "number" ||
@@ -28,19 +43,26 @@ function refreshForecastWeather() {
 }
 
 function refresTT() {
-  var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
-  document.getElementById("lastUpdate").innerHTML = now.format("HH:mm");
-  document.getElementById("date").innerHTML = now.format("YY-MM-DD");
-  updateCalendar();
-  setNightMode();
-  window.setTimeout(refresTT, 15 * 1000);
+  window.clearTimeout(clockTimer);
+  clockTimer = window.setTimeout(refresTT, 15 * 1000);
+  runRefreshStep("clock", function () {
+    var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
+    document.getElementById("lastUpdate").innerHTML = now.format("HH:mm");
+  });
+  runRefreshStep("date", function () {
+    document.getElementById("date").innerHTML =
+      momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD");
+  });
+  runRefreshStep("calendar", updateCalendar);
+  runRefreshStep("night", setNightMode);
 }
 
 function refreshData() {
-  clockNetwork.syncTime();
-  refreshActualWeather();
-  refreshForecastWeather();
-  window.setTimeout(refreshData, 60 * 1000);
+  window.clearTimeout(dataTimer);
+  dataTimer = window.setTimeout(refreshData, 60 * 1000);
+  runRefreshStep("time-sync", function () { clockNetwork.syncTime(); });
+  runRefreshStep("weather", refreshActualWeather);
+  runRefreshStep("forecast", refreshForecastWeather);
 }
 
 var sunTimesHtml = "";
@@ -162,7 +184,6 @@ function processActualWeather(data) {
   $date = document.getElementById("date");
   $date.innerHTML = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD");
   city.innerHTML = cityNameDB[data.name] ? cityNameDB[data.name] : data.name; // 如果有对应的城市中文名就显示中文名
-  console.log("城市:", data.name);
   temp = document.getElementById("temp");
   temp.innerText = data.weather[0].description + tt + unitsSymbolHtml;
   temp.className = feelsLike ? "feelsLike" : "";
@@ -325,7 +346,6 @@ function rotate() {
 }
 
 window.addEventListener("load", function () {
-  console.log("load");
   _apiParams = getApiParams();
   if (_apiParams === null) {
     window.location = "config.html";
@@ -366,9 +386,9 @@ window.addEventListener("load", function () {
   refresTT();
   refreshData();
 
-  rotate();
-  setRem("load");
-  setNightMode();
+  runRefreshStep("rotation", rotate);
+  runRefreshStep("layout", function () { setRem("load"); });
+  runRefreshStep("night", setNightMode);
 
   var now = new Date();
   var cleanTime = new Date().setHours(4, 0, 0);

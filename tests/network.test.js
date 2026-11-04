@@ -49,6 +49,73 @@ function browser(storage = {}) {
 }
 
 const interval = 30 * 60 * 1000;
+function loadClock(b) {
+  vm.runInContext(fs.readFileSync('vendor/moment/moment-with-locales.js', 'utf8'), b.context);
+  vm.runInContext(fs.readFileSync('script.js', 'utf8'), b.context);
+}
+
+test('calendar errors cannot stop the clock or later refresh steps, and recovery is automatic', () => {
+  const b = browser(); loadClock(b);
+  let nightCalls = 0;
+  b.context.updateCalendar = () => { throw Error('calendar failed'); };
+  b.context.setNightMode = () => nightCalls++;
+  b.context.refresTT();
+  const first = b.elements.lastUpdate.innerHTML;
+  assert.match(b.elements.runtimeStatus.textContent, /calendar.*calendar failed/);
+  b.advance(60000);
+  assert.notEqual(b.elements.lastUpdate.innerHTML, first);
+  assert.equal(nightCalls, 2);
+  let recovered = 0;
+  b.context.updateCalendar = () => recovered++;
+  b.advance(15000);
+  assert.equal(recovered, 1);
+});
+
+test('time and weather exceptions do not stop forecast or future refresh cycles', () => {
+  const b = browser(); loadClock(b);
+  let forecasts = 0;
+  b.context.clockNetwork.syncTime = () => { throw Error('sync failed'); };
+  b.context.refreshActualWeather = () => { throw Error('weather failed'); };
+  b.context.refreshForecastWeather = () => forecasts++;
+  b.context.refreshData();
+  assert.equal(forecasts, 1);
+  b.advance(60000);
+  assert.equal(forecasts, 2);
+});
+
+test('failed XHR construction releases the busy flag for a later retry', () => {
+  const b = browser();
+  const XHR = b.context.XMLHttpRequest;
+  b.context.XMLHttpRequest = function () { throw Error('unavailable'); };
+  b.context.clockNetwork.syncTime();
+  assert.match(b.elements.networkStatus.textContent, /失败/);
+  b.context.XMLHttpRequest = XHR;
+  b.advance(interval);
+  b.context.clockNetwork.syncTime();
+  assert.equal(b.requests.length, 1);
+});
+
+test('failed script creation releases weather busy state for a later retry', () => {
+  const b = browser();
+  b.context.document.createElement = () => { throw Error('unavailable'); };
+  request(b, 'weather');
+  assert.match(b.elements.networkStatus.textContent, /无法发起请求/);
+  b.context.document.createElement = () => ({});
+  b.advance(interval); request(b, 'weather');
+  assert.equal(b.scripts.length, 1);
+});
+
+test('render failures are distinguished from invalid data and remain retryable', () => {
+  const b = browser(); loadClock(b);
+  request(b, 'weather', () => { throw Error('DOM failed'); });
+  b.reply(b.scripts[0], { valid: true });
+  assert.match(b.elements.networkStatus.textContent, /Render error/);
+  assert.match(b.elements.runtimeStatus.textContent, /weather-render.*DOM failed/);
+  b.advance(interval); request(b, 'weather');
+  b.reply(b.scripts[0], { valid: true });
+  assert.match(b.elements.networkStatus.textContent, /已更新/);
+});
+
 function request(b, type, render = () => {}) {
   b.context.clockNetwork.weather(type, 'q=Nantong', interval, data => {
     if (!data || !data.valid) throw Error('invalid');

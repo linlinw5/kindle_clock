@@ -15,14 +15,16 @@ var clockNetwork = (function () {
 
   function status(name, message) {
     messages[name] = message;
-    var element = document.getElementById("networkStatus");
-    if (element) {
-      var lines = [];
-      for (var key in messages) {
-        if (messages.hasOwnProperty(key)) lines.push(messages[key]);
+    try {
+      var element = document.getElementById("networkStatus");
+      if (element) {
+        var lines = [];
+        for (var key in messages) {
+          if (messages.hasOwnProperty(key)) lines.push(messages[key]);
+        }
+        element.textContent = lines.join(" · ");
       }
-      element.textContent = lines.join(" · ");
-    }
+    } catch (ignored) { /* A diagnostic display failure must not lock a request. */ }
   }
 
   function jsonp(url, callback) {
@@ -64,7 +66,9 @@ var clockNetwork = (function () {
       }
     }
     function show(message) {
-      var stamp = state.updated ? momentWithCorrectUtcOffset(new Date(state.updated)).format("MM-DD HH:mm") : "";
+      var stamp = "";
+      try { stamp = state.updated ? momentWithCorrectUtcOffset(new Date(state.updated)).format("MM-DD HH:mm") : ""; }
+      catch (ignored) {}
       status(type, label + "：" + message + (stamp ? "（上次 " + stamp + "）" : ""));
     }
     // A manually changed device clock must not suppress requests indefinitely.
@@ -76,13 +80,21 @@ var clockNetwork = (function () {
     }
     state.busy = true;
     show(state.data ? "更新中，保留旧数据" : "连接中");
-    jsonp("https://api.openweathermap.org/data/2.5/" + type + "?" + params, function (error, data) {
+    function receive(error, data) {
       state.busy = false;
       if (!error) {
         if (data && data.cod && String(data.cod) !== "200") {
           error = "API " + data.cod + (String(data.cod) === "429" ? " 限流" : String(data.cod) === "401" ? " 密钥无效" : " 请求失败");
         } else {
-          try { validate(data); render(data); } catch (e) { error = "天气数据不完整"; }
+          try { validate(data); } catch (e) { error = "天气数据不完整"; }
+          if (!error) {
+            try { render(data); } catch (e) {
+              error = "Render error";
+              if (typeof runRefreshStep === "function") {
+                runRefreshStep(type + "-render", function () { throw e; });
+              }
+            }
+          }
         }
       }
       var received = new Date().getTime();
@@ -100,7 +112,9 @@ var clockNetwork = (function () {
         show("已更新");
       }
       write(key, state);
-    });
+    }
+    try { jsonp("https://api.openweathermap.org/data/2.5/" + type + "?" + params, receive); }
+    catch (e) { receive("无法发起请求"); }
   }
 
   var timeBusy = false;
@@ -109,7 +123,7 @@ var clockNetwork = (function () {
     var now = new Date().getTime();
     if (timeBusy || now < nextSync) return;
     timeBusy = true;
-    var xhr = new XMLHttpRequest();
+    var xhr;
     var finished = false;
     var timer;
     function finish(error) {
@@ -120,19 +134,25 @@ var clockNetwork = (function () {
       nextSync = new Date().getTime() + (error ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000);
       status("time", error ? "校时：失败，继续使用设备时间及已有校正" : "校时：正常");
     }
-    xhr.onreadystatechange = function () {
-      if (xhr.readyState !== 4 || finished) return;
-      var end = new Date().getTime();
-      var match = xhr.status === 200 && xhr.responseText.match(/time="(\d+)"/);
-      if (!match) { finish(true); return; }
-      var serverTime = Number(match[1]) / 1000;
-      if (!isFinite(serverTime) || serverTime < 1577836800000 || serverTime > 4102444800000) { finish(true); return; }
-      DT_Times = serverTime - (now + end) / 2;
-      finish(false);
-    };
-    xhr.onerror = function () { finish(true); };
-    timer = window.setTimeout(function () { finish(true); xhr.abort(); }, timeout);
     try {
+      xhr = new XMLHttpRequest();
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4 || finished) return;
+        try {
+          var end = new Date().getTime();
+          var match = xhr.status === 200 && xhr.responseText.match(/time="(\d+)"/);
+          if (!match) { finish(true); return; }
+          var serverTime = Number(match[1]) / 1000;
+          if (!isFinite(serverTime) || serverTime < 1577836800000 || serverTime > 4102444800000) { finish(true); return; }
+          DT_Times = serverTime - (now + end) / 2;
+          finish(false);
+        } catch (e) { finish(true); }
+      };
+      xhr.onerror = function () { finish(true); };
+      timer = window.setTimeout(function () {
+        finish(true);
+        try { xhr.abort(); } catch (ignored) {}
+      }, timeout);
       status("time", "校时：连接中");
       xhr.open("GET", "https://time.gov/widget/dhtml/at_nist_use_only.cgi?disablecache=" + now, true);
       xhr.send();

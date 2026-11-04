@@ -135,6 +135,13 @@ html.night {
   border-right: none;
 }
 
+#runtimeStatus {
+  font-family: sans-serif;
+  font-size: 2rem;
+  text-align: center;
+  word-wrap: break-word;
+}
+
 .portrait .col5 {
   display: none;
 }
