@@ -9,8 +9,12 @@ function runRefreshStep(name, action) {
   } catch (error) {
     try {
       var element = document.getElementById("runtimeStatus");
-      if (element) element.textContent = "Error [" + name + "]: " +
-        String(error && error.message ? error.message : error).slice(0, 180);
+      if (element) {
+        var detail = "Error [" + name + "]: " +
+          String(error && error.message ? error.message : error);
+        element.textContent = detail.slice(0, 80);
+        element.title = detail;
+      }
     } catch (ignored) {}
   }
 }

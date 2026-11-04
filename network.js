@@ -44,8 +44,8 @@ var clockNetwork = (function () {
       callback(error, data);
     }
     window[name] = function (data) { finish(null, data); };
-    script.onerror = function () { finish("连接失败（网络或服务拒绝请求）"); };
-    script.onload = function () { finish("响应没有有效回调"); };
+    script.onerror = function () { finish("连接失败"); };
+    script.onload = function () { finish("无有效回调"); };
     script.src = url + "&callback=" + name;
     timer = window.setTimeout(function () { finish("请求超时"); }, timeout);
     try { document.body.appendChild(script); } catch (e) { finish("无法发起请求"); }
@@ -69,7 +69,11 @@ var clockNetwork = (function () {
       var stamp = "";
       try { stamp = state.updated ? momentWithCorrectUtcOffset(new Date(state.updated)).format("MM-DD HH:mm") : ""; }
       catch (ignored) {}
-      status(type, label + "：" + message + (stamp ? "（上次 " + stamp + "）" : ""));
+      status(type, label + "：" + message);
+      try {
+        var element = document.getElementById("networkStatus");
+        if (element && stamp) element.title = label + "（上次 " + stamp + "）";
+      } catch (ignored) {}
     }
     // A manually changed device clock must not suppress requests indefinitely.
     if (state.next > now + 6 * 60 * 60 * 1000) state.next = 0;
@@ -79,7 +83,7 @@ var clockNetwork = (function () {
       return;
     }
     state.busy = true;
-    show(state.data ? "更新中，保留旧数据" : "连接中");
+    show(state.data ? "更新中" : "连接中");
     function receive(error, data) {
       state.busy = false;
       if (!error) {
@@ -101,7 +105,7 @@ var clockNetwork = (function () {
       if (error) {
         state.failures = (state.failures || 0) + 1;
         state.next = received + Math.min(6 * 60 * 60 * 1000, interval * Math.pow(2, Math.min(state.failures - 1, 6)));
-        state.error = error + "，稍后重试";
+        state.error = error;
         show(state.error);
       } else {
         state.data = data;
@@ -132,7 +136,7 @@ var clockNetwork = (function () {
       timeBusy = false;
       window.clearTimeout(timer);
       nextSync = new Date().getTime() + (error ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000);
-      status("time", error ? "校时：失败，继续使用设备时间及已有校正" : "校时：正常");
+      status("time", error ? "校时：失败" : "校时：正常");
     }
     try {
       xhr = new XMLHttpRequest();
