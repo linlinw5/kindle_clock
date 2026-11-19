@@ -44,27 +44,17 @@ var clockNetwork = (function () {
       callback(error, data);
     }
     window[name] = function (data) { finish(null, data); };
-    script.onerror = function () { finish("连接失败"); };
+    // OpenWeather answers errors (bad key 401, rate limit 429, unknown city 404) with a
+    // plain JSON body and an HTTP error status, never through the callback, so to a
+    // <script> tag they all look like a failed load and cannot be told apart.
+    script.onerror = function () { finish("连接失败（网络、Key 或城市名有误）"); };
     script.onload = function () { finish("无有效回调"); };
     script.src = url + "&callback=" + name;
     timer = window.setTimeout(function () { finish("请求超时"); }, timeout);
     try { document.body.appendChild(script); } catch (e) { finish("无法发起请求"); }
   }
 
-  // Calls a completion callback exactly once; the callback must not break the request state.
-  function once(done) {
-    var called = false;
-    return function () {
-      if (called || typeof done !== "function") return;
-      called = true;
-      try { done(); } catch (ignored) {}
-    };
-  }
-
-  // `done` (optional) fires once the request has finished or was skipped, so the
-  // caller can serialize requests instead of letting them race on the old browser.
-  function weather(type, params, interval, validate, render, done) {
-    done = once(done);
+  function weather(type, params, interval, validate, render) {
     var key = "kindle-weather-v2:" + type + ":" + params;
     var state = states[key];
     var label = type === "weather" ? "天气" : "预报";
@@ -90,10 +80,12 @@ var clockNetwork = (function () {
     }
     // A manually changed device clock must not suppress requests indefinitely.
     if (state.next > now + 6 * 60 * 60 * 1000) state.next = 0;
-    if (state.busy) { done(); return; }
-    if (state.next > now) {
+    if (state.busy) return;
+    // The page checks once a minute and `next` counts from when the last request
+    // ended (up to the 15 s timeout later), so allow 20 s early; otherwise a
+    // 1-minute retry would slip to the following check, 2 minutes later.
+    if (state.next > now + 20 * 1000) {
       show(state.error || (state.data ? "缓存" : "等待重试"));
-      done();
       return;
     }
     state.busy = true;
@@ -101,24 +93,24 @@ var clockNetwork = (function () {
     function receive(error, data) {
       state.busy = false;
       if (!error) {
-        if (data && data.cod && String(data.cod) !== "200") {
-          error = "API " + data.cod + (String(data.cod) === "429" ? " 限流" : String(data.cod) === "401" ? " 密钥无效" : " 请求失败");
-        } else {
-          try { validate(data); } catch (e) { error = "天气数据不完整"; }
-          if (!error) {
-            try { render(data); } catch (e) {
-              error = "Render error";
-              if (typeof runRefreshStep === "function") {
-                runRefreshStep(type + "-render", function () { throw e; });
-              }
-            }
+        try { validate(data); } catch (e) { error = "天气数据不完整"; }
+        if (!error) {
+          try { render(data); } catch (e) {
+            error = "Render error";
+            runRefreshStep(type + "-render", function () { throw e; });
           }
         }
       }
       var received = new Date().getTime();
       if (error) {
         state.failures = (state.failures || 0) + 1;
-        state.next = received + Math.min(6 * 60 * 60 * 1000, interval * Math.pow(2, Math.min(state.failures - 1, 6)));
+        var factor = Math.pow(2, Math.min(state.failures - 1, 6));
+        // Nothing on screen yet (e.g. Wi-Fi still connecting after wake-up): retry
+        // after 1, 2, 4... minutes, up to the refresh interval. With data on screen,
+        // back off from the refresh interval up to 6 hours.
+        state.next = received + (state.data ?
+          Math.min(6 * 60 * 60 * 1000, interval * factor) :
+          Math.min(interval, 60 * 1000 * factor));
         state.error = error;
         show(state.error);
       } else {
@@ -130,7 +122,6 @@ var clockNetwork = (function () {
         show("已更新");
       }
       write(key, state);
-      done();
     }
     try { jsonp("https://api.openweathermap.org/data/2.5/" + type + "?" + params, receive); }
     catch (e) { receive("无法发起请求"); }
@@ -138,10 +129,9 @@ var clockNetwork = (function () {
 
   var timeBusy = false;
   var nextSync = 0;
-  function syncTime(done) {
-    done = once(done);
+  function syncTime() {
     var now = new Date().getTime();
-    if (timeBusy || now < nextSync) { done(); return; }
+    if (timeBusy || now < nextSync) return;
     timeBusy = true;
     var xhr;
     var finished = false;
@@ -153,7 +143,6 @@ var clockNetwork = (function () {
       window.clearTimeout(timer);
       nextSync = new Date().getTime() + (error ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000);
       status("time", error ? "校时：失败" : "校时：正常");
-      done();
     }
     try {
       xhr = new XMLHttpRequest();

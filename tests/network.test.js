@@ -25,7 +25,7 @@ function browser(storage = {}) {
     document: {
       body, createElement: () => ({}),
       getElementById: id => elements[id] || (elements[id] = { style: {}, addEventListener() {} }),
-      querySelector: () => ({ style: {} }), getElementsByClassName: () => []
+      documentElement: { style: {} }
     },
     momentWithCorrectUtcOffset: () => ({ format: () => '11-03 20:00' }),
     setTimeout(fn, delay) { timers.set(++id, { fn, at: now + delay }); return id; },
@@ -59,7 +59,7 @@ test('calendar errors cannot stop the clock or later refresh steps, and recovery
   let nightCalls = 0;
   b.context.updateCalendar = () => { throw Error('calendar failed'); };
   b.context.setNightMode = () => nightCalls++;
-  b.context.refresTT();
+  b.context.refreshClock();
   const first = b.elements.lastUpdate.innerHTML;
   assert.match(b.elements.runtimeStatus.textContent, /calendar.*calendar failed/);
   b.advance(60000);
@@ -145,17 +145,41 @@ test('successful cache survives page reload and expires after the refresh interv
   assert.equal(second.scripts.length, 1);
 });
 
-test('429 keeps old data and persists exponential backoff across reloads', () => {
+// OpenWeather errors (401 bad key, 429 rate limit, 404 unknown city) arrive as an HTTP
+// error status, which a <script> tag reports as a failed load.
+test('API errors keep old data and persist exponential backoff across reloads', () => {
   const b = browser(); request(b, 'weather'); b.reply(b.scripts[0], { valid: true });
-  b.advance(interval); request(b, 'weather'); b.reply(b.scripts[0], { cod: 429 });
+  b.advance(interval); request(b, 'weather'); b.scripts[0].onerror();
   let saved = JSON.parse(Object.values(b.storage)[0]);
   assert.equal(saved.data.valid, true); assert.equal(saved.next - b.now(), interval);
-  b.advance(interval); request(b, 'weather'); b.reply(b.scripts[0], { cod: '429' });
+  b.advance(interval); request(b, 'weather'); b.scripts[0].onerror();
   saved = JSON.parse(Object.values(b.storage)[0]);
   assert.equal(saved.next - b.now(), 2 * interval);
   const next = browser(b.storage); request(next, 'weather');
   assert.equal(next.scripts.length, 0);
-  assert.match(next.elements.networkStatus.textContent, /429/);
+  assert.match(next.elements.networkStatus.textContent, /连接失败（网络、Key 或城市名有误）/);
+});
+
+test('without data on screen, failures retry after 1, 2, 4 minutes up to the refresh interval', () => {
+  const b = browser();
+  const waits = [];
+  for (let i = 0; i < 7; i++) {
+    request(b, 'weather'); b.scripts[0].onerror();
+    waits.push(JSON.parse(Object.values(b.storage)[0]).next - b.now());
+    b.advance(waits[i]);
+  }
+  const minute = 60 * 1000;
+  assert.deepEqual(waits, [minute, 2 * minute, 4 * minute, 8 * minute, 16 * minute, interval, interval]);
+  request(b, 'weather'); b.reply(b.scripts[0], { valid: true });
+  assert.equal(JSON.parse(Object.values(b.storage)[0]).next - b.now(), interval);
+});
+
+test('a request that timed out is retried at the next once-a-minute check, not the one after', () => {
+  const b = browser();
+  request(b, 'weather'); b.advance(15000); // timed out, retry due 60 s after the timeout
+  assert.equal(b.scripts.length, 0);
+  b.advance(45000); request(b, 'weather'); // the page's next check, 60 s after the first request
+  assert.equal(b.scripts.length, 1);
 });
 
 test('timeout and late response cannot overwrite a successful cached value', () => {
@@ -199,7 +223,7 @@ test('clock and calendar cross midnight even with no weather response', () => {
   vm.runInContext(fs.readFileSync('script.js', 'utf8'), b.context);
   b.context.sun = b.elements.sun = {};
   b.context.DT_Times = Date.parse('2026-11-03T15:59:55Z') - b.now();
-  b.context.refresTT(); assert.equal(b.elements.date.innerHTML, '26-11-03');
+  b.context.refreshClock(); assert.equal(b.elements.date.innerHTML, '26-11-03');
   b.advance(15000);
   assert.equal(b.elements.date.innerHTML, '26-11-04');
   assert.equal(b.elements.lastUpdate.innerHTML, '00:00');
@@ -210,55 +234,80 @@ function loadImages(b) {
 }
 
 function fakeImage() {
-  const attrs = {};
-  return {
-    style: {}, className: '',
-    setAttribute(k, v) { attrs[k] = String(v); },
-    getAttribute(k) { return k in attrs ? attrs[k] : null; },
-    removeAttribute(k) { delete attrs[k]; if (k === 'src') delete this.src; }
-  };
+  return { style: {}, removeAttribute(k) { delete this[k]; } };
 }
 
-test('every icon class the page can produce has a PNG in both day and night sets', () => {
-  const b = browser(); loadClock(b); loadImages(b);
-  const classes = [];
-  for (const id of Object.keys(JSON.parse(fs.readFileSync('images/icons.js', 'utf8').match(/= (\{.*\});/)[1]))) classes.push(id);
+// Wires the page elements that processActualWeather/processForecastWeather use.
+function loadPage(b) {
+  loadClock(b); loadImages(b);
+  const c = b.context;
+  c.cityNameDB = {};
+  c.city = {}; c.temp = {}; c.sun = {};
+  c.icon = fakeImage();
+  for (let i = 0; i < 5; i++) c.forecastCells.push({ time: {}, icon: fakeImage(), temp: {}, desc: {} });
+  return c;
+}
+
+function item(id, icon, dt) {
+  return { dt, main: { temp: 10, feels_like: 8 }, weather: [{ id, icon, description: 'x' }] };
+}
+
+// A clear night at the first quarter moon (phase ~0.25) and four ordinary forecasts.
+const firstQuarter = Date.UTC(2026, 10, 17, 12) / 1000;
+function weatherData() {
+  const data = item(800, '01n', firstQuarter);
+  data.coord = { lat: 30 }; data.name = 'Nantong'; data.timezone = 28800;
+  data.sys = { sunrise: firstQuarter - 6 * 3600, sunset: firstQuarter + 4 * 3600 };
+  return data;
+}
+function forecastData() {
+  return { city: { coord: { lat: 30 }, timezone: 28800 }, list: [
+    item(800, '01n', firstQuarter), item(500, '10d', firstQuarter), item(804, '04n', firstQuarter),
+    item(999, '01d', firstQuarter), item(600, '13d', firstQuarter)
+  ] };
+}
+
+test('every OpenWeather id and moon phase has a PNG in both day and night sets', () => {
+  const b = browser(); loadImages(b);
+  const icons = b.context.weatherIcons;
+  const codes = new Set([...Object.values(icons.day), ...Object.values(icons.night), ...icons.moon, icons.sunrise, icons.sunset]);
+  assert.equal(icons.moon.length, 28);
   for (const id of [200, 300, 500, 600, 701, 800, 801, 804]) {
-    for (const time of ['d', 'n']) {
-      const cls = b.context.getIconClassName({ id, icon: '01' + time }, new Date(Date.UTC(2026, 10, 3)));
-      assert.ok(b.context.iconCode(cls), 'no image for ' + cls);
-    }
+    assert.ok(icons.day[id] && icons.night[id], 'no icon for ' + id);
   }
-  for (let i = 0; i < 28; i++) {
-    assert.ok(b.context.iconCode(b.context.getMoonIconClasses(i / 28, false)));
-    assert.ok(b.context.iconCode(b.context.getMoonIconClasses(i / 28, true)));
-  }
-  for (const cls of classes) {
-    const code = b.context.iconCode(cls);
-    assert.ok(fs.existsSync('images/icons/day/' + code + '.png'), cls);
-    assert.ok(fs.existsSync('images/icons/night/' + code + '.png'), cls);
+  for (const code of codes) {
+    assert.ok(fs.existsSync('images/icons/day/' + code + '.png'), code);
+    assert.ok(fs.existsSync('images/icons/night/' + code + '.png'), code);
   }
 });
 
-test('icons keep moon rotation classes and switch image set with night mode', () => {
-  const b = browser(); loadClock(b); loadImages(b);
-  const img = fakeImage();
-  b.context.document.getElementsByClassName = name => (img.className.split(' ').indexOf(name) >= 0 ? [img] : []);
-  b.context.setIcon(img, b.context.getMoonIconClasses(0.1, false));
-  assert.match(img.className, /moonIcon moonFirstHalf wicon/);
-  assert.match(img.src, /^images\/icons\/day\/f[0-9a-f]+\.png$/);
-  b.context.setMoonIconsRotation(30);
-  assert.equal(img.style.webkitTransform, 'rotate(60deg)');
+test('clear nights show the rotated moon phase; unknown ids hide the icon', () => {
+  const b = browser(); const c = loadPage(b);
+  c.processActualWeather(weatherData());
+  c.processForecastWeather(forecastData());
+  const moons = c.weatherIcons.moon;
+  const phase = c.moonPhase(new Date(firstQuarter * 1000));
+  const index = Math.floor(phase * 28);
+  assert.equal(c.icon.src, 'images/icons/day/' + moons[index] + '.png');
+  assert.equal(c.icon.style.webkitTransform, 'rotate(60deg)'); // (30 - 90) * -1 in the first half
+  assert.equal(c.forecastCells[1].icon.src, 'images/icons/day/' + c.weatherIcons.day[500] + '.png');
+  assert.equal(c.forecastCells[1].icon.style.webkitTransform, '');
+  assert.equal(c.forecastCells[2].icon.src, 'images/icons/day/' + c.weatherIcons.night[804] + '.png');
+  assert.equal(c.forecastCells[3].icon.src, undefined);
+  assert.ok(c.sun.innerHTML.indexOf('images/icons/day/' + c.weatherIcons.sunrise + '.png') >= 0);
+});
 
-  const root = { style: {} };
-  b.context.document.querySelector = () => root;
-  b.context.night_mode = 'on';
-  b.context.setNightMode();
-  assert.equal(root.className, 'night');
-  assert.match(img.src, /^images\/icons\/night\//);
-
-  b.context.setIcon(img, 'wi wi-unknown');
-  assert.equal(img.src, undefined);
+test('switching to night mode redraws every icon from the night set with the opposite moon phase', () => {
+  const b = browser(); const c = loadPage(b);
+  c.processActualWeather(weatherData());
+  c.processForecastWeather(forecastData());
+  const index = Math.floor(c.moonPhase(new Date(firstQuarter * 1000)) * 28);
+  c.night_mode = 'on';
+  c.setNightMode();
+  assert.equal(c.document.documentElement.className, 'night');
+  assert.equal(c.icon.src, 'images/icons/night/' + c.weatherIcons.moon[(index + 14) % 28] + '.png');
+  assert.equal(c.forecastCells[4].icon.src, 'images/icons/night/' + c.weatherIcons.day[600] + '.png');
+  assert.ok(c.sun.innerHTML.indexOf('images/icons/night/' + c.weatherIcons.sunrise + '.png') >= 0);
 });
 
 test('automatic timezone follows city offset in seconds, including UTC and fractional hours', () => {
@@ -283,44 +332,3 @@ test('automatic timezone follows city offset in seconds, including UTC and fract
   assert.equal(displayed(), '2026-11-03 10:00');
 });
 
-test('data refresh runs weather, forecast and time sync one at a time with a pause between', () => {
-  const b = browser(); loadClock(b);
-  const order = [];
-  const pending = {};
-  ['refreshActualWeather', 'refreshForecastWeather'].forEach(name => {
-    b.context[name] = done => { order.push(name); pending[name] = done; };
-  });
-  b.context.clockNetwork.syncTime = done => { order.push('sync'); done(); };
-  b.context.refreshData();
-  assert.deepEqual(order, ['refreshActualWeather']);
-  pending.refreshActualWeather(); pending.refreshActualWeather();
-  assert.deepEqual(order, ['refreshActualWeather']);
-  b.advance(1500);
-  assert.deepEqual(order, ['refreshActualWeather', 'refreshForecastWeather']);
-  pending.refreshForecastWeather(); b.advance(1500);
-  assert.deepEqual(order, ['refreshActualWeather', 'refreshForecastWeather', 'sync']);
-});
-
-test('a step that never completes cannot stall the refresh chain', () => {
-  const b = browser(); loadClock(b);
-  let synced = 0;
-  b.context.refreshActualWeather = () => {};
-  b.context.refreshForecastWeather = done => done();
-  b.context.clockNetwork.syncTime = done => { synced++; done(); };
-  b.context.refreshData();
-  assert.equal(synced, 0);
-  b.advance(20000); b.advance(1500);
-  assert.equal(synced, 1);
-});
-
-test('weather completion callback fires once for cache skips and network responses', () => {
-  const b = browser();
-  let calls = 0;
-  const done = () => calls++;
-  b.context.clockNetwork.weather('weather', 'q=Nantong', interval, d => { if (!d.valid) throw Error(); }, () => {}, done);
-  assert.equal(calls, 0);
-  b.reply(b.scripts[0], { valid: true });
-  assert.equal(calls, 1);
-  b.context.clockNetwork.weather('weather', 'q=Nantong', interval, d => { if (!d.valid) throw Error(); }, () => {}, done);
-  assert.equal(calls, 2);
-});
