@@ -3,9 +3,11 @@ var clockTimer = null;
 var dataTimer = null;
 
 // Diagnostics must never interrupt the task they are reporting on.
+// Returns false when the step threw.
 function runRefreshStep(name, action) {
   try {
     action();
+    return true;
   } catch (error) {
     try {
       var element = document.getElementById("runtimeStatus");
@@ -16,7 +18,66 @@ function runRefreshStep(name, action) {
         element.title = detail;
       }
     } catch (ignored) {}
+    return false;
   }
+}
+
+// The old Kindle WebKit/e-ink pipeline drops screen updates when several DOM
+// changes arrive while a refresh is still being drawn. Run network steps one at
+// a time, leave a pause after each response so the panel can finish drawing,
+// and never let one step stall the chain.
+var STEP_GAP = 1500;
+var STEP_GUARD = 20 * 1000;
+function runSerialSteps(steps, finished) {
+  var index = 0;
+  function next() {
+    if (index >= steps.length) {
+      if (finished) runRefreshStep("steps-finished", finished);
+      return;
+    }
+    var step = steps[index++];
+    var called = false;
+    var sync = true;
+    var guard = null;
+    function done() {
+      if (called) return;
+      called = true;
+      window.clearTimeout(guard);
+      // A cache hit/skip answers synchronously: continue immediately.
+      if (sync) next();
+      else window.setTimeout(next, STEP_GAP);
+    }
+    guard = window.setTimeout(done, STEP_GUARD);
+    if (!runRefreshStep(step.name, function () { step.run(done); })) done();
+    sync = false;
+  }
+  next();
+}
+
+// Invalidate the whole page so the next paint redraws everything, not just the
+// last dirty region. No paint happens between the two style writes.
+var repaintTimer = null;
+var lateRepaintTimer = null;
+function forceRepaint() {
+  var target = page || document.getElementById("page");
+  if (!target || !target.style) return;
+  var display = target.style.display;
+  target.style.display = "none";
+  void target.offsetHeight;
+  target.style.display = display || "";
+}
+
+function scheduleRepaint() {
+  window.clearTimeout(repaintTimer);
+  window.clearTimeout(lateRepaintTimer);
+  repaintTimer = window.setTimeout(function () {
+    runRefreshStep("repaint", forceRepaint);
+  }, 800);
+  // A second pass catches web fonts (icons/PuHuiTi) that finished loading late;
+  // old WebKit often does not repaint text when its font arrives.
+  lateRepaintTimer = window.setTimeout(function () {
+    runRefreshStep("repaint", forceRepaint);
+  }, 5000);
 }
 
 function validateWeatherItem(data) {
@@ -28,22 +89,22 @@ function validateWeatherItem(data) {
   }
 }
 
-function refreshActualWeather() {
+function refreshActualWeather(done) {
   clockNetwork.weather("weather", _apiParams, refreshTime, function (data) {
     validateWeatherItem(data);
     if (!data.sys || typeof data.sys.sunrise !== "number" || typeof data.sys.sunset !== "number" ||
         !data.coord || typeof data.coord.lat !== "number" || typeof data.name !== "string") {
       throw new Error("Invalid current weather");
     }
-  }, processActualWeather);
+  }, processActualWeather, done);
 }
 
-function refreshForecastWeather() {
+function refreshForecastWeather(done) {
   clockNetwork.weather("forecast", _apiParams, refreshTime, function (data) {
     if (!data || !data.city || !data.city.coord || typeof data.city.coord.lat !== "number" ||
         !data.list || data.list.length < forecastCount) throw new Error("Invalid forecast");
     for (var i = 0; i < forecastCount; i++) validateWeatherItem(data.list[i]);
-  }, processForecastWeather);
+  }, processForecastWeather, done);
 }
 
 function refresTT() {
@@ -64,9 +125,11 @@ function refresTT() {
 function refreshData() {
   window.clearTimeout(dataTimer);
   dataTimer = window.setTimeout(refreshData, 60 * 1000);
-  runRefreshStep("time-sync", function () { clockNetwork.syncTime(); });
-  runRefreshStep("weather", refreshActualWeather);
-  runRefreshStep("forecast", refreshForecastWeather);
+  runSerialSteps([
+    { name: "weather", run: function (done) { refreshActualWeather(done); } },
+    { name: "forecast", run: function (done) { refreshForecastWeather(done); } },
+    { name: "time-sync", run: function (done) { clockNetwork.syncTime(done); } }
+  ]);
 }
 
 var sunTimesHtml = "";
@@ -90,6 +153,7 @@ function processForecastWeather(data) {
     forecastsCells[i].icon.style.webkitTransform = null;
   }
   setMoonIconsRotation(data.city.coord.lat);
+  scheduleRepaint();
 }
 
 function getIconClassName(weather, date) {
@@ -204,6 +268,7 @@ function processActualWeather(data) {
   updateCalendar();
   setNightMode();
   setMoonIconsRotation(data.coord.lat);
+  scheduleRepaint();
 }
 
 function getMoonPhase(year, month, day) {
@@ -388,11 +453,16 @@ window.addEventListener("load", function () {
 
   city.textContent = "设置城市";
   refresTT();
-  refreshData();
 
   runRefreshStep("rotation", rotate);
   runRefreshStep("layout", function () { setRem("load"); });
   runRefreshStep("night", setNightMode);
+
+  // Let the first frame (layout + clock) reach the screen before cached data
+  // and network responses start mutating the DOM.
+  window.clearTimeout(dataTimer);
+  dataTimer = window.setTimeout(refreshData, 1000);
+  scheduleRepaint();
 
   var now = new Date();
   var cleanTime = new Date().setHours(4, 0, 0);

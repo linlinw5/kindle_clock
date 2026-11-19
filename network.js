@@ -51,7 +51,20 @@ var clockNetwork = (function () {
     try { document.body.appendChild(script); } catch (e) { finish("无法发起请求"); }
   }
 
-  function weather(type, params, interval, validate, render) {
+  // Calls a completion callback exactly once; the callback must not break the request state.
+  function once(done) {
+    var called = false;
+    return function () {
+      if (called || typeof done !== "function") return;
+      called = true;
+      try { done(); } catch (ignored) {}
+    };
+  }
+
+  // `done` (optional) fires once the request has finished or was skipped, so the
+  // caller can serialize requests instead of letting them race on the old browser.
+  function weather(type, params, interval, validate, render, done) {
+    done = once(done);
     var key = "kindle-weather-v2:" + type + ":" + params;
     var state = states[key];
     var label = type === "weather" ? "天气" : "预报";
@@ -77,9 +90,10 @@ var clockNetwork = (function () {
     }
     // A manually changed device clock must not suppress requests indefinitely.
     if (state.next > now + 6 * 60 * 60 * 1000) state.next = 0;
-    if (state.busy) return;
+    if (state.busy) { done(); return; }
     if (state.next > now) {
       show(state.error || (state.data ? "缓存" : "等待重试"));
+      done();
       return;
     }
     state.busy = true;
@@ -116,6 +130,7 @@ var clockNetwork = (function () {
         show("已更新");
       }
       write(key, state);
+      done();
     }
     try { jsonp("https://api.openweathermap.org/data/2.5/" + type + "?" + params, receive); }
     catch (e) { receive("无法发起请求"); }
@@ -123,9 +138,10 @@ var clockNetwork = (function () {
 
   var timeBusy = false;
   var nextSync = 0;
-  function syncTime() {
+  function syncTime(done) {
+    done = once(done);
     var now = new Date().getTime();
-    if (timeBusy || now < nextSync) return;
+    if (timeBusy || now < nextSync) { done(); return; }
     timeBusy = true;
     var xhr;
     var finished = false;
@@ -137,6 +153,7 @@ var clockNetwork = (function () {
       window.clearTimeout(timer);
       nextSync = new Date().getTime() + (error ? 30 * 60 * 1000 : 6 * 60 * 60 * 1000);
       status("time", error ? "校时：失败" : "校时：正常");
+      done();
     }
     try {
       xhr = new XMLHttpRequest();

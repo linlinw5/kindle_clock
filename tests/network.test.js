@@ -226,3 +226,45 @@ test('automatic timezone follows city offset in seconds, including UTC and fract
   b.context.dataTimeZone = NaN;
   assert.equal(displayed(), '2026-11-03 10:00');
 });
+
+test('data refresh runs weather, forecast and time sync one at a time with a pause between', () => {
+  const b = browser(); loadClock(b);
+  const order = [];
+  const pending = {};
+  ['refreshActualWeather', 'refreshForecastWeather'].forEach(name => {
+    b.context[name] = done => { order.push(name); pending[name] = done; };
+  });
+  b.context.clockNetwork.syncTime = done => { order.push('sync'); done(); };
+  b.context.refreshData();
+  assert.deepEqual(order, ['refreshActualWeather']);
+  pending.refreshActualWeather(); pending.refreshActualWeather();
+  assert.deepEqual(order, ['refreshActualWeather']);
+  b.advance(1500);
+  assert.deepEqual(order, ['refreshActualWeather', 'refreshForecastWeather']);
+  pending.refreshForecastWeather(); b.advance(1500);
+  assert.deepEqual(order, ['refreshActualWeather', 'refreshForecastWeather', 'sync']);
+});
+
+test('a step that never completes cannot stall the refresh chain', () => {
+  const b = browser(); loadClock(b);
+  let synced = 0;
+  b.context.refreshActualWeather = () => {};
+  b.context.refreshForecastWeather = done => done();
+  b.context.clockNetwork.syncTime = done => { synced++; done(); };
+  b.context.refreshData();
+  assert.equal(synced, 0);
+  b.advance(20000); b.advance(1500);
+  assert.equal(synced, 1);
+});
+
+test('weather completion callback fires once for cache skips and network responses', () => {
+  const b = browser();
+  let calls = 0;
+  const done = () => calls++;
+  b.context.clockNetwork.weather('weather', 'q=Nantong', interval, d => { if (!d.valid) throw Error(); }, () => {}, done);
+  assert.equal(calls, 0);
+  b.reply(b.scripts[0], { valid: true });
+  assert.equal(calls, 1);
+  b.context.clockNetwork.weather('weather', 'q=Nantong', interval, d => { if (!d.valid) throw Error(); }, () => {}, done);
+  assert.equal(calls, 2);
+});
