@@ -1,14 +1,9 @@
-@font-face {
-  font-family: PuHuiTi;
-  src: url("./PuHuiTiMin.ttf?v=20261103-weather");
-}
-
 html,
 body {
   height: 100%;
   margin: 0;
   padding: 0;
-  font-family: PuHuiTi;
+  font-family: sans-serif;
 }
 
 a {
@@ -35,12 +30,29 @@ html.night {
   display: none;
 }
 
-/* Off-screen but laid out (not display:none), so WebKit loads the fonts. */
-#fontWarmup {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  font-size: 10px;
+/* Text uses the system font now; bold keeps it close to the old PuHuiTi Heavy look. */
+#date,
+#temp,
+#lastUpdate,
+.colTime,
+.colDesc,
+#sun {
+  font-weight: bold;
+}
+
+/* Weather icons are PNGs (see tools/build_images.py). The canvas is 1.5625em
+   square so it holds every glyph; negative margins keep the same line height the
+   icon font had, so the layout does not grow. Size follows the parent font-size. */
+img.wicon {
+  width: 1.5625em;
+  height: 1.5625em;
+  margin: -0.28125em 0;
+  vertical-align: middle;
+  border: 0;
+}
+
+img.wicon:not([src]) {
+  visibility: hidden;
 }
 
 #page {

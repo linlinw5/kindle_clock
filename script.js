@@ -54,32 +54,6 @@ function runSerialSteps(steps, finished) {
   next();
 }
 
-// Invalidate the whole page so the next paint redraws everything, not just the
-// last dirty region. No paint happens between the two style writes.
-var repaintTimer = null;
-var lateRepaintTimer = null;
-function forceRepaint() {
-  var target = page || document.getElementById("page");
-  if (!target || !target.style) return;
-  var display = target.style.display;
-  target.style.display = "none";
-  void target.offsetHeight;
-  target.style.display = display || "";
-}
-
-function scheduleRepaint() {
-  window.clearTimeout(repaintTimer);
-  window.clearTimeout(lateRepaintTimer);
-  repaintTimer = window.setTimeout(function () {
-    runRefreshStep("repaint", forceRepaint);
-  }, 800);
-  // A second pass catches web fonts (icons/PuHuiTi) that finished loading late;
-  // old WebKit often does not repaint text when its font arrives.
-  lateRepaintTimer = window.setTimeout(function () {
-    runRefreshStep("repaint", forceRepaint);
-  }, 5000);
-}
-
 function validateWeatherItem(data) {
   if (!data || !data.main || typeof data.main.temp !== "number" ||
       typeof data.main.feels_like !== "number" || !data.weather || !data.weather[0] ||
@@ -107,6 +81,50 @@ function refreshForecastWeather(done) {
   }, processForecastWeather, done);
 }
 
+// The old Kindle browser renders @font-face fonts unreliably (missing digits and
+// icons), while system fonts and images are fine. So text uses the system font
+// and weather icons are PNGs pre-rendered by tools/build_images.py, in a day
+// and a night variant.
+function imageMode() {
+  return isNightMode() ? "night" : "day";
+}
+
+function iconCode(className) {
+  if (typeof weatherIconCodes === "undefined") return null;
+  var parts = String(className).split(" ");
+  for (var i = 0; i < parts.length; i++) {
+    if (weatherIconCodes.hasOwnProperty(parts[i])) return weatherIconCodes[parts[i]];
+  }
+  return null;
+}
+
+function iconSrc(code) {
+  return "images/icons/" + imageMode() + "/" + code + ".png";
+}
+
+// Keeps the icon classes (moonIcon/moonFirstHalf drive the moon rotation).
+function setIcon(img, className) {
+  var code = iconCode(className);
+  img.className = className + " wicon";
+  img.setAttribute("data-code", code || "");
+  if (code) img.src = iconSrc(code);
+  else img.removeAttribute("src");
+}
+
+function iconHtml(className) {
+  var code = iconCode(className);
+  return code ? "<img class='wicon' data-code='" + code + "' src='" + iconSrc(code) + "' alt='' />" : "";
+}
+
+// Re-point every icon at the current day/night image set.
+function refreshIconImages() {
+  var images = document.getElementsByClassName("wicon");
+  for (var i = 0; i < images.length; i++) {
+    var code = images[i].getAttribute("data-code");
+    if (code) images[i].src = iconSrc(code);
+  }
+}
+
 function refresTT() {
   window.clearTimeout(clockTimer);
   clockTimer = window.setTimeout(refresTT, 15 * 1000);
@@ -132,10 +150,19 @@ function refreshData() {
   ]);
 }
 
-var sunTimesHtml = "";
+var sunriseText = null;
+var sunsetText = null;
 function updateCalendar() {
   var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
-  if (sun) sun.innerHTML = now.format("第WW周") + "&nbsp;&nbsp;" + sunTimesHtml + now.format("dddd");
+  var sunTimesHtml = sunriseText === null ? "" :
+    sunriseText + iconHtml("wi-sunrise") + "&nbsp;&nbsp;&nbsp;" +
+    sunsetText + iconHtml("wi-sunset") + "&nbsp;&nbsp;";
+  var html = now.format("第WW周") + "&nbsp;&nbsp;" + sunTimesHtml + now.format("dddd");
+  // Avoid re-creating the sunrise/sunset images on every tick.
+  if (sun && sun.__html !== html) {
+    sun.innerHTML = html;
+    sun.__html = html;
+  }
 }
 
 function processForecastWeather(data) {
@@ -145,7 +172,7 @@ function processForecastWeather(data) {
     var feelsLike = tempType == "feelsLike";
     forecastsCells[i].temp.innerHTML =
       (feelsLike ? Math.round(forecast.main.feels_like) : Math.round(forecast.main.temp)) + unitsSymbolHtml;
-    forecastsCells[i].icon.className = getIconClassName(forecast.weather[0], new Date(forecast.dt * 1000));
+    setIcon(forecastsCells[i].icon, getIconClassName(forecast.weather[0], new Date(forecast.dt * 1000)));
     forecastsCells[i].desc.innerHTML = forecast.weather[0].description;
     forecastsCells[i].time.innerHTML = momentWithCorrectUtcOffset(new Date(forecast.dt * 1000)).format(timeFormat);
     forecastsCells[i].temp.className = feelsLike ? "colTemp feelsLike" : "colTemp";
@@ -153,7 +180,6 @@ function processForecastWeather(data) {
     forecastsCells[i].icon.style.webkitTransform = null;
   }
   setMoonIconsRotation(data.city.coord.lat);
-  scheduleRepaint();
 }
 
 function getIconClassName(weather, date) {
@@ -244,7 +270,7 @@ RegExp.escape = function (s) {
 function processActualWeather(data) {
   dataTimeZone = data.timezone;
   var feelsLike = tempType == "feelsLike";
-  icon.className = getIconClassName(data.weather[0], new Date(data.dt * 1000));
+  setIcon(icon, getIconClassName(data.weather[0], new Date(data.dt * 1000)));
   icon.style.transform = null;
   icon.style.webkitTransform = null;
 
@@ -263,12 +289,11 @@ function processActualWeather(data) {
 
   lastUpdate = document.getElementById("lastUpdate");
   lastUpdate.innerHTML = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format(timeFormat);
-  sunTimesHtml = sunrise.format(timeFormat) + "<i class='wi wi-sunrise'></i>&nbsp;&nbsp;&nbsp;" +
-    sunset.format(timeFormat) + "<i class='wi wi-sunset'></i>&nbsp;&nbsp;";
+  sunriseText = sunrise.format(timeFormat);
+  sunsetText = sunset.format(timeFormat);
   updateCalendar();
   setNightMode();
   setMoonIconsRotation(data.coord.lat);
-  scheduleRepaint();
 }
 
 function getMoonPhase(year, month, day) {
@@ -462,7 +487,6 @@ window.addEventListener("load", function () {
   // and network responses start mutating the DOM.
   window.clearTimeout(dataTimer);
   dataTimer = window.setTimeout(refreshData, 1000);
-  scheduleRepaint();
 
   var now = new Date();
   var cleanTime = new Date().setHours(4, 0, 0);
@@ -496,11 +520,14 @@ function setRem(prefix) {
 
 function setNightMode() {
   var root = document.querySelector(":root");
-  if (isNightMode()) {
-    root.className = "night";
-  } else {
-    root.className = null;
-  }
+  var night = isNightMode();
+  var className = night ? "night" : "";
+  // Only touch the root class on change: rewriting it restyles the whole page.
+  if (root.__nightClass === className) return;
+  root.__nightClass = className;
+  root.className = className;
+  // Switch every icon to the matching day/night image set.
+  refreshIconImages();
 }
 
 function isNightMode() {

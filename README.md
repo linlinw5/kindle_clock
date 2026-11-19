@@ -9,7 +9,7 @@
 相对原作主要改动如下：
 
 - 大幅修改了 kindle.css，去掉了所有定位布局系统，换成了 webkit 版的 flexbox（老 kindle 内置浏览器不支持现代 flexbox）；
-- 重新制作了字体，基于阿里巴巴普惠体，工具和方法放在./fontTool；
+- 不使用任何网页字体（@font-face）：老 Kindle 浏览器渲染网页字体不可靠，会缺数字、缺图标。文字统一用系统字体，天气图标预先渲染成 PNG（白天/夜间各一套）；
 - 修改了日期、城市和当前天气的显示；
 - network.js，天气缓存、15 秒超时、失败退避重试、独立 JSONP 回调；校时成功后每 6 小时同步；
 - 时钟、日期、日历、夜间模式、校时和两类天气请求分别捕获异常，互不拖累；
@@ -42,13 +42,13 @@
 
 config.js 中 cityNameDB 收录了中国和加拿大的多个知名城市，如果自己所在的城市未列入，则右上角会显示拼音，可以自行添加自己城市的中文名到 cityNameDB。
 
-添加后，如果现有字体没有包含这些汉字，需要使用 [fontTool](./fontTool/readme.md) 重新构建字体。在仓库根目录运行：
+文字使用 Kindle 系统字体，添加城市后无需重新构建字体。
+
+天气图标是 `images/icons/` 下的 PNG，由 `vendor/weathericons` 的图标字体生成。修改 `css/custom-icons.css` 中的图标映射或 `script.js` 中的月相图标后，在仓库根目录重新生成：
 
 ```sh
-uv run --no-project --python 3.14 --with "fonttools>=4.61,<5" python fontTool/build_font.py
+uv run --no-project --python 3.14 --with pillow python tools/build_images.py
 ```
-
-脚本会自动补入城市名用字，并直接更新 `css/PuHuiTiMin.ttf`。
 
 ## 效果图
 

@@ -205,6 +205,62 @@ test('clock and calendar cross midnight even with no weather response', () => {
   assert.equal(b.elements.lastUpdate.innerHTML, '00:00');
 });
 
+function loadImages(b) {
+  vm.runInContext(fs.readFileSync('images/icons.js', 'utf8'), b.context);
+}
+
+function fakeImage() {
+  const attrs = {};
+  return {
+    style: {}, className: '',
+    setAttribute(k, v) { attrs[k] = String(v); },
+    getAttribute(k) { return k in attrs ? attrs[k] : null; },
+    removeAttribute(k) { delete attrs[k]; if (k === 'src') delete this.src; }
+  };
+}
+
+test('every icon class the page can produce has a PNG in both day and night sets', () => {
+  const b = browser(); loadClock(b); loadImages(b);
+  const classes = [];
+  for (const id of Object.keys(JSON.parse(fs.readFileSync('images/icons.js', 'utf8').match(/= (\{.*\});/)[1]))) classes.push(id);
+  for (const id of [200, 300, 500, 600, 701, 800, 801, 804]) {
+    for (const time of ['d', 'n']) {
+      const cls = b.context.getIconClassName({ id, icon: '01' + time }, new Date(Date.UTC(2026, 10, 3)));
+      assert.ok(b.context.iconCode(cls), 'no image for ' + cls);
+    }
+  }
+  for (let i = 0; i < 28; i++) {
+    assert.ok(b.context.iconCode(b.context.getMoonIconClasses(i / 28, false)));
+    assert.ok(b.context.iconCode(b.context.getMoonIconClasses(i / 28, true)));
+  }
+  for (const cls of classes) {
+    const code = b.context.iconCode(cls);
+    assert.ok(fs.existsSync('images/icons/day/' + code + '.png'), cls);
+    assert.ok(fs.existsSync('images/icons/night/' + code + '.png'), cls);
+  }
+});
+
+test('icons keep moon rotation classes and switch image set with night mode', () => {
+  const b = browser(); loadClock(b); loadImages(b);
+  const img = fakeImage();
+  b.context.document.getElementsByClassName = name => (img.className.split(' ').indexOf(name) >= 0 ? [img] : []);
+  b.context.setIcon(img, b.context.getMoonIconClasses(0.1, false));
+  assert.match(img.className, /moonIcon moonFirstHalf wicon/);
+  assert.match(img.src, /^images\/icons\/day\/f[0-9a-f]+\.png$/);
+  b.context.setMoonIconsRotation(30);
+  assert.equal(img.style.webkitTransform, 'rotate(60deg)');
+
+  const root = { style: {} };
+  b.context.document.querySelector = () => root;
+  b.context.night_mode = 'on';
+  b.context.setNightMode();
+  assert.equal(root.className, 'night');
+  assert.match(img.src, /^images\/icons\/night\//);
+
+  b.context.setIcon(img, 'wi wi-unknown');
+  assert.equal(img.src, undefined);
+});
+
 test('automatic timezone follows city offset in seconds, including UTC and fractional hours', () => {
   const b = browser();
   vm.runInContext(fs.readFileSync('vendor/moment/moment-with-locales.js', 'utf8'), b.context);

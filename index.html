@@ -10,8 +10,8 @@
 
     <script src="vendor/moment/moment-with-locales.js" type="text/javascript"></script>
     <script src="config.js" type="text/javascript"></script>
-    <link rel="stylesheet" type="text/css" href="vendor/weathericons/css/weather-icons.css" />
-    <link rel="stylesheet" type="text/css" href="css/custom-icons.css" />
+    <!-- No web fonts: the old Kindle browser renders them unreliably. Icons and clock digits are PNGs. -->
+    <script src="images/icons.js" type="text/javascript"></script>
     <link rel="stylesheet" type="text/css" href="css/kindle.css" />
     <script src="network.js" type="text/javascript"></script>
     <script src="script.js" type="text/javascript"></script>
@@ -25,7 +25,7 @@
       </div>
 
       <div id="weatherInfo">
-        <div id="iconWrapper"><i id="icon"></i></div>
+        <div id="iconWrapper"><img id="icon" class="wicon" alt="" /></div>
         <div class="tempWrapper">
           <div id="temp"></div>
         </div>
@@ -35,31 +35,31 @@
       <div class="forecast">
         <div class="col col1">
           <div id="time1" class="colTime"></div>
-          <div class="forecastIconWrapper"><i id="icon1" class="colIcon"></i></div>
+          <div class="forecastIconWrapper"><img id="icon1" class="wicon" alt="" /></div>
           <div id="temp1" class="colTemp"></div>
           <div id="desc1" class="colDesc"></div>
         </div>
         <div class="col col2">
           <div id="time2" class="colTime"></div>
-          <div class="forecastIconWrapper"><i id="icon2" class="colIcon"></i></div>
+          <div class="forecastIconWrapper"><img id="icon2" class="wicon" alt="" /></div>
           <div id="temp2" class="colTemp"></div>
           <div id="desc2" class="colDesc"></div>
         </div>
         <div class="col col3">
           <div id="time3" class="colTime"></div>
-          <div class="forecastIconWrapper"><i id="icon3" class="colIcon"></i></div>
+          <div class="forecastIconWrapper"><img id="icon3" class="wicon" alt="" /></div>
           <div id="temp3" class="colTemp"></div>
           <div id="desc3" class="colDesc"></div>
         </div>
         <div class="col col4">
           <div id="time4" class="colTime"></div>
-          <div class="forecastIconWrapper"><i id="icon4" class="colIcon"></i></div>
+          <div class="forecastIconWrapper"><img id="icon4" class="wicon" alt="" /></div>
           <div id="temp4" class="colTemp"></div>
           <div id="desc4" class="colDesc"></div>
         </div>
         <div class="col col5">
           <div id="time5" class="colTime"></div>
-          <div class="forecastIconWrapper"><i id="icon5" class="colIcon"></i></div>
+          <div class="forecastIconWrapper"><img id="icon5" class="wicon" alt="" /></div>
           <div id="temp5" class="colTemp"></div>
           <div id="desc5" class="colDesc"></div>
         </div>
@@ -70,7 +70,5 @@
       <div id="runtimeStatus" role="status"></div>
     </div>
     <div id="cleaner"></div>
-    <!-- Starts both web fonts downloading at page load instead of when weather data arrives. -->
-    <div id="fontWarmup" aria-hidden="true"><i class="wi wi-day-sunny"></i><span>0123456789℃周</span></div>
   </body>
 </html>
