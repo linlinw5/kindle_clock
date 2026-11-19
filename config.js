@@ -18,6 +18,11 @@ var refreshTime = 30 * 60 * 1000;
 // "on" - night mode all the day :)
 var night_mode = "off";
 
+// After new weather data is drawn, flash the screen black/white once so the
+// e-ink panel fully redraws (fixes missing digits/icons from partial updates).
+// Set to false to disable the flash.
+var full_refresh_after_update = true;
+
 // null: follow the city timezone returned by weather (UTC+8 until available).
 // "local": use the device timezone, which may be incorrect on Kindle.
 // A fixed offset such as "+08:00" overrides the city timezone.
