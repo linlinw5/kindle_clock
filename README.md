@@ -18,7 +18,7 @@
 
 ## 第一步：关闭屏幕休眠模式
 
-最新的 kindle 系统已经无法在搜索框中输入： ～ ds 来关闭屏保，必须越狱。
+最新的 kindle 系统已经无法在搜索框中输入 `~ds` 来关闭屏保，必须越狱。
 
 - 安装 WinterBreak
 - 安装 KUAL 和 KUAL Helper
@@ -32,9 +32,13 @@
 
 ## 第二步：用 Kindle 浏览器打开时钟
 
-访问页面：[Kindle 时钟和天气预报](https://linlinw5.github.io/kindle_clock/)。可以将此地址加入 Kindle 浏览器书签。
+访问页面：[Kindle 时钟和天气预报](https://linlinw5.github.io/kindle_clock/)。
 
-点击页面右上角的城市名称进入配置页，可设置城市、时区、温度单位，以及自己的 OpenWeather Appid-Key。
+点击页面右上角的城市名称进入配置页，可设置城市（或经纬度）、时区、显示语言、屏幕方向、温度单位、实际/体感温度、夜间模式，以及自己的 OpenWeather Appid-Key。
+
+设置保存在网址参数里（例如 `index.html?city=shanghai,CN&night=auto`），不会存到设备上。**保存设置后，请把当前页面加入 Kindle 浏览器书签**；直接收藏首页地址会回到 `config.js` 中的默认设置。
+
+点击页面上的温度，可在实际温度和体感温度（带下划线）之间切换。
 
 城市可以填写为“城市名,国家简写”，使用英文逗号分隔，例如 `shanghai,CN`（中国上海）、`toronto,CA`（加拿大多伦多），避免匹配到其他国家的同名城市。
 
@@ -42,9 +46,7 @@
 
 config.js 中 cityNameDB 收录了中国和加拿大的多个知名城市，如果自己所在的城市未列入，则右上角会显示拼音，可以自行添加自己城市的中文名到 cityNameDB。
 
-文字使用 Kindle 系统字体，添加城市后无需重新构建字体。
-
-天气图标是 `images/icons/` 下的 PNG，由 `vendor/weathericons` 的图标字体生成。修改 `css/custom-icons.css` 中的图标映射或 `script.js` 中的月相图标后，在仓库根目录重新生成：
+天气图标是 `images/icons/` 下的 PNG，由 `vendor/weathericons` 的图标字体生成。修改 `css/custom-icons.css` 中的天气图标映射，或 `tools/build_images.py` 中的月相图标后，在仓库根目录重新生成：
 
 ```sh
 uv run --no-project --python 3.14 --with pillow python tools/build_images.py
@@ -53,7 +55,3 @@ uv run --no-project --python 3.14 --with pillow python tools/build_images.py
 ## 效果图
 
 ![Kindle7代](./docs/kindle.jpg)
-
-![竖屏](./docs/竖屏.png)
-
-![横屏](./docs/横屏.png)
