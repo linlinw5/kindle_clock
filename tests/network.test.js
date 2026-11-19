@@ -67,7 +67,7 @@ test('calendar errors cannot stop the clock or later refresh steps, and recovery
   assert.equal(nightCalls, 2);
   let recovered = 0;
   b.context.updateCalendar = () => recovered++;
-  b.advance(60300);
+  b.advance(15000);
   assert.equal(recovered, 1);
 });
 
@@ -267,47 +267,4 @@ test('weather completion callback fires once for cache skips and network respons
   assert.equal(calls, 1);
   b.context.clockNetwork.weather('weather', 'q=Nantong', interval, d => { if (!d.valid) throw Error(); }, () => {}, done);
   assert.equal(calls, 2);
-});
-
-test('clock ticks once per minute and only writes the DOM when the text changes', () => {
-  const b = browser(); loadClock(b);
-  let writes = 0;
-  const el = {};
-  Object.defineProperty(el, 'innerHTML', { set() { writes++; }, get() { return ''; } });
-  b.elements.lastUpdate = el;
-  b.context.DT_Times = Date.parse('2026-11-03T02:00:10Z') - b.now();
-  b.context.refresTT(); assert.equal(writes, 1);
-  b.context.refresTT(); assert.equal(writes, 1);
-  b.advance(49000); assert.equal(writes, 1);
-  b.advance(1500); assert.equal(writes, 2);
-});
-
-test('night mode class is not rewritten on every tick', () => {
-  const b = browser(); loadClock(b);
-  let writes = 0;
-  const root = { style: {} };
-  Object.defineProperty(root, 'className', { set() { writes++; }, get() { return ''; } });
-  b.context.document.querySelector = () => root;
-  b.context.setNightMode(); b.context.setNightMode(); b.context.setNightMode();
-  assert.equal(writes, 1);
-});
-
-test('one full-screen flash follows a refresh round that rendered data, none otherwise', () => {
-  const b = browser(); loadClock(b);
-  const cleaner = b.context.document.getElementById('cleaner');
-  const shown = [];
-  Object.defineProperty(cleaner.style, 'display', { set(v) { shown.push(v); }, get() { return ''; } });
-  b.context.refreshActualWeather = done => { b.context.markDataRendered(); done(); };
-  b.context.refreshForecastWeather = done => done();
-  b.context.clockNetwork.syncTime = done => done();
-  b.context.refreshData();
-  b.advance(500); b.advance(500);
-  assert.deepEqual(shown, ['block', 'block', 'none']);
-  b.context.refreshActualWeather = done => done();
-  b.advance(60000); b.advance(1000);
-  assert.equal(shown.length, 3);
-  b.context.full_refresh_after_update = false;
-  b.context.refreshActualWeather = done => { b.context.markDataRendered(); done(); };
-  b.advance(60000); b.advance(1000);
-  assert.equal(shown.length, 3);
 });

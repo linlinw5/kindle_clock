@@ -54,69 +54,30 @@ function runSerialSteps(steps, finished) {
   next();
 }
 
-// E-ink rule 1: touch the DOM only when a value really changes. Every write makes
-// the Kindle browser push a partial e-ink update, and frequent or overlapping
-// partial updates are what leave missing digits and icons on the panel.
-function setHtml(el, value) {
-  if (!el) return;
-  value = String(value);
-  if (el.__kcHtml === value) return;
-  el.__kcHtml = value;
-  el.innerHTML = value;
+// Invalidate the whole page so the next paint redraws everything, not just the
+// last dirty region. No paint happens between the two style writes.
+var repaintTimer = null;
+var lateRepaintTimer = null;
+function forceRepaint() {
+  var target = page || document.getElementById("page");
+  if (!target || !target.style) return;
+  var display = target.style.display;
+  target.style.display = "none";
+  void target.offsetHeight;
+  target.style.display = display || "";
 }
 
-function setText(el, value) {
-  if (!el) return;
-  value = String(value);
-  if (el.__kcText === value) return;
-  el.__kcText = value;
-  el.textContent = value;
-}
-
-function setClass(el, value) {
-  if (!el) return;
-  if (el.__kcClass === value) return;
-  el.__kcClass = value;
-  el.className = value;
-}
-
-function setTransform(el, value) {
-  if (!el || !el.style) return;
-  if (el.__kcTransform === value) return;
-  el.__kcTransform = value;
-  el.style.transform = value;
-  el.style.webkitTransform = value;
-}
-
-// E-ink rule 2: after new data has been drawn, flash the whole screen once with
-// the #cleaner overlay. Hiding the overlay makes the browser redraw every pixel
-// of the page, which repairs anything a partial update dropped.
-var dataRendered = false;
-var flashing = false;
-function markDataRendered() {
-  dataRendered = true;
-}
-
-function flashScreen(times, done) {
-  var overlay = cleaner || document.getElementById("cleaner");
-  if (!overlay || !overlay.style) { if (done) done(); return; }
-  if (times <= 0) {
-    overlay.style.display = "none";
-    flashing = false;
-    if (done) done();
-    return;
-  }
-  flashing = true;
-  overlay.style.display = "block";
-  overlay.style.background = times % 2 == 0 ? "#ffffff" : "#000000";
-  window.setTimeout(function () { flashScreen(times - 1, done); }, 500);
-}
-
-function flashIfDataRendered() {
-  if (!dataRendered) return;
-  dataRendered = false;
-  if (full_refresh_after_update === false || flashing) return;
-  flashScreen(2);
+function scheduleRepaint() {
+  window.clearTimeout(repaintTimer);
+  window.clearTimeout(lateRepaintTimer);
+  repaintTimer = window.setTimeout(function () {
+    runRefreshStep("repaint", forceRepaint);
+  }, 800);
+  // A second pass catches web fonts (icons/PuHuiTi) that finished loading late;
+  // old WebKit often does not repaint text when its font arrives.
+  lateRepaintTimer = window.setTimeout(function () {
+    runRefreshStep("repaint", forceRepaint);
+  }, 5000);
 }
 
 function validateWeatherItem(data) {
@@ -148,16 +109,14 @@ function refreshForecastWeather(done) {
 
 function refresTT() {
   window.clearTimeout(clockTimer);
-  // Wake just after each minute boundary: the display only changes once a minute.
-  var corrected = new Date().getTime() + DT_Times;
-  clockTimer = window.setTimeout(refresTT, 60 * 1000 - (corrected % (60 * 1000)) + 300);
+  clockTimer = window.setTimeout(refresTT, 15 * 1000);
   runRefreshStep("clock", function () {
     var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
-    setHtml(document.getElementById("lastUpdate"), now.format("HH:mm"));
+    document.getElementById("lastUpdate").innerHTML = now.format("HH:mm");
   });
   runRefreshStep("date", function () {
-    setHtml(document.getElementById("date"),
-      momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD"));
+    document.getElementById("date").innerHTML =
+      momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD");
   });
   runRefreshStep("calendar", updateCalendar);
   runRefreshStep("night", setNightMode);
@@ -170,13 +129,13 @@ function refreshData() {
     { name: "weather", run: function (done) { refreshActualWeather(done); } },
     { name: "forecast", run: function (done) { refreshForecastWeather(done); } },
     { name: "time-sync", run: function (done) { clockNetwork.syncTime(done); } }
-  ], flashIfDataRendered);
+  ]);
 }
 
 var sunTimesHtml = "";
 function updateCalendar() {
   var now = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times));
-  if (sun) setHtml(sun, now.format("第WW周") + "&nbsp;&nbsp;" + sunTimesHtml + now.format("dddd"));
+  if (sun) sun.innerHTML = now.format("第WW周") + "&nbsp;&nbsp;" + sunTimesHtml + now.format("dddd");
 }
 
 function processForecastWeather(data) {
@@ -184,17 +143,17 @@ function processForecastWeather(data) {
   for (var i = 0; i < forecastCount; i++) {
     var forecast = data.list[i];
     var feelsLike = tempType == "feelsLike";
-    var cell = forecastsCells[i];
-    setHtml(cell.temp,
-      (feelsLike ? Math.round(forecast.main.feels_like) : Math.round(forecast.main.temp)) + unitsSymbolHtml);
-    setClass(cell.icon, getIconClassName(forecast.weather[0], new Date(forecast.dt * 1000)));
-    setText(cell.desc, forecast.weather[0].description);
-    setHtml(cell.time, momentWithCorrectUtcOffset(new Date(forecast.dt * 1000)).format(timeFormat));
-    setClass(cell.temp, feelsLike ? "colTemp feelsLike" : "colTemp");
-    setTransform(cell.icon, "");
+    forecastsCells[i].temp.innerHTML =
+      (feelsLike ? Math.round(forecast.main.feels_like) : Math.round(forecast.main.temp)) + unitsSymbolHtml;
+    forecastsCells[i].icon.className = getIconClassName(forecast.weather[0], new Date(forecast.dt * 1000));
+    forecastsCells[i].desc.innerHTML = forecast.weather[0].description;
+    forecastsCells[i].time.innerHTML = momentWithCorrectUtcOffset(new Date(forecast.dt * 1000)).format(timeFormat);
+    forecastsCells[i].temp.className = feelsLike ? "colTemp feelsLike" : "colTemp";
+    forecastsCells[i].icon.style.transform = null;
+    forecastsCells[i].icon.style.webkitTransform = null;
   }
   setMoonIconsRotation(data.city.coord.lat);
-  markDataRendered();
+  scheduleRepaint();
 }
 
 function getIconClassName(weather, date) {
@@ -285,16 +244,17 @@ RegExp.escape = function (s) {
 function processActualWeather(data) {
   dataTimeZone = data.timezone;
   var feelsLike = tempType == "feelsLike";
-  setClass(icon, getIconClassName(data.weather[0], new Date(data.dt * 1000)));
-  setTransform(icon, "");
+  icon.className = getIconClassName(data.weather[0], new Date(data.dt * 1000));
+  icon.style.transform = null;
+  icon.style.webkitTransform = null;
 
   tt = feelsLike ? Math.round(data.main.feels_like) : Math.round(data.main.temp);
   $date = document.getElementById("date");
-  setHtml($date, momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD"));
-  setText(city, cityNameDB[data.name] ? cityNameDB[data.name] : data.name); // 如果有对应的城市中文名就显示中文名
+  $date.innerHTML = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format("YY-MM-DD");
+  city.innerHTML = cityNameDB[data.name] ? cityNameDB[data.name] : data.name; // 如果有对应的城市中文名就显示中文名
   temp = document.getElementById("temp");
-  setText(temp, data.weather[0].description + tt + unitsSymbolHtml);
-  setClass(temp, feelsLike ? "feelsLike" : "");
+  temp.innerText = data.weather[0].description + tt + unitsSymbolHtml;
+  temp.className = feelsLike ? "feelsLike" : "";
 
   var sunrise = momentWithCorrectUtcOffset(new Date(data.sys.sunrise * 1000));
   var sunset = momentWithCorrectUtcOffset(new Date(data.sys.sunset * 1000));
@@ -302,13 +262,13 @@ function processActualWeather(data) {
   _sunsetHour = sunset.hour();
 
   lastUpdate = document.getElementById("lastUpdate");
-  setHtml(lastUpdate, momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format(timeFormat));
+  lastUpdate.innerHTML = momentWithCorrectUtcOffset(new Date(new Date().getTime() + DT_Times)).format(timeFormat);
   sunTimesHtml = sunrise.format(timeFormat) + "<i class='wi wi-sunrise'></i>&nbsp;&nbsp;&nbsp;" +
     sunset.format(timeFormat) + "<i class='wi wi-sunset'></i>&nbsp;&nbsp;";
   updateCalendar();
   setNightMode();
   setMoonIconsRotation(data.coord.lat);
-  markDataRendered();
+  scheduleRepaint();
 }
 
 function getMoonPhase(year, month, day) {
@@ -344,7 +304,8 @@ function setMoonIconsRotation(latitude) {
   for (var i = 0; i < elements.length; i++) {
     var direction = elements[i].className.indexOf("moonFirstHalf") !== -1 ? -1 : 1;
     var transform = "rotate(" + rotation * direction + "deg)";
-    setTransform(elements[i], transform);
+    elements[i].style.transform = transform;
+    elements[i].style.webkitTransform = transform;
   }
 }
 
@@ -393,7 +354,7 @@ var moonIcons = [
   ["wi-moon-alt-waning-crescent-6", "wi-moon-alt-waxing-gibbous-6"],
 ];
 var timeFormat = "HH:mm";
-var api_params, api_appId, api_lang, api_units, api_locParams, rotation, night_mode, refreshTime, utcOffset, tempType, cityNameDB, full_refresh_after_update;
+var api_params, api_appId, api_lang, api_units, api_locParams, rotation, night_mode, refreshTime, utcOffset, tempType, cityNameDB;
 utcOffset = getUrlParameter("utcOffset") ? getUrlParameter("utcOffset") : utcOffset;
 tempType = getUrlParameter("tempType") ? getUrlParameter("tempType") : tempType;
 var dataTimeZone = null;
@@ -501,6 +462,7 @@ window.addEventListener("load", function () {
   // and network responses start mutating the DOM.
   window.clearTimeout(dataTimer);
   dataTimer = window.setTimeout(refreshData, 1000);
+  scheduleRepaint();
 
   var now = new Date();
   var cleanTime = new Date().setHours(4, 0, 0);
@@ -533,8 +495,12 @@ function setRem(prefix) {
 }
 
 function setNightMode() {
-  // Rewriting the root class restyles and repaints the whole page, so only do it on change.
-  setClass(document.querySelector(":root"), isNightMode() ? "night" : "");
+  var root = document.querySelector(":root");
+  if (isNightMode()) {
+    root.className = "night";
+  } else {
+    root.className = null;
+  }
 }
 
 function isNightMode() {
@@ -573,10 +539,22 @@ function momentLocale() {
   }
 }
 
-function clearScreen() {
-  flashScreen(5, function () {
-    window.setTimeout(clearScreen, 3600000);
-  });
+function clearScreen(times) {
+  if (typeof times == "undefined") {
+    times = 5;
+  }
+
+  if (times <= 0) {
+    cleaner.style.display = "none";
+    window.setTimeout("clearScreen()", 3600000);
+    return;
+  }
+
+  cleaner.style.display = "block";
+  cleaner.style.background = times % 2 == 0 ? "#ffffff" : "#000000";
+  window.setTimeout(function () {
+    clearScreen(times - 1);
+  }, 500);
 }
 
 function momentWithCorrectUtcOffset(dateTime) {
